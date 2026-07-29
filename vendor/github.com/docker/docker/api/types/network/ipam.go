@@ -4,8 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-
-	"github.com/docker/docker/internal/multierror"
+	"strings"
 )
 
 // IPAM represents IP Address Management
@@ -30,30 +29,9 @@ const (
 	ip6 ipFamily = "IPv6"
 )
 
-// HasIPv6Subnets checks whether there's any IPv6 subnets in the ipam parameter. It ignores any invalid Subnet and nil
-// ipam.
-func HasIPv6Subnets(ipam *IPAM) bool {
-	if ipam == nil {
-		return false
-	}
-
-	for _, cfg := range ipam.Config {
-		subnet, err := netip.ParsePrefix(cfg.Subnet)
-		if err != nil {
-			continue
-		}
-
-		if subnet.Addr().Is6() {
-			return true
-		}
-	}
-
-	return false
-}
-
 // ValidateIPAM checks whether the network's IPAM passed as argument is valid. It returns a joinError of the list of
 // errors found.
-func ValidateIPAM(ipam *IPAM) error {
+func ValidateIPAM(ipam *IPAM, enableIPv6 bool) error {
 	if ipam == nil {
 		return nil
 	}
@@ -68,6 +46,10 @@ func ValidateIPAM(ipam *IPAM) error {
 		subnetFamily := ip4
 		if subnet.Addr().Is6() {
 			subnetFamily = ip6
+		}
+
+		if !enableIPv6 && subnetFamily == ip6 {
+			continue
 		}
 
 		if subnet != subnet.Masked() {
@@ -89,7 +71,7 @@ func ValidateIPAM(ipam *IPAM) error {
 		}
 	}
 
-	if err := multierror.Join(errs...); err != nil {
+	if err := errJoin(errs...); err != nil {
 		return fmt.Errorf("invalid network config:\n%w", err)
 	}
 
@@ -148,4 +130,44 @@ func validateAddress(address string, subnet netip.Prefix, subnetFamily ipFamily)
 	}
 
 	return nil
+}
+
+func errJoin(errs ...error) error {
+	n := 0
+	for _, err := range errs {
+		if err != nil {
+			n++
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	e := &joinError{
+		errs: make([]error, 0, n),
+	}
+	for _, err := range errs {
+		if err != nil {
+			e.errs = append(e.errs, err)
+		}
+	}
+	return e
+}
+
+type joinError struct {
+	errs []error
+}
+
+func (e *joinError) Error() string {
+	if len(e.errs) == 1 {
+		return strings.TrimSpace(e.errs[0].Error())
+	}
+	stringErrs := make([]string, 0, len(e.errs))
+	for _, subErr := range e.errs {
+		stringErrs = append(stringErrs, strings.ReplaceAll(subErr.Error(), "\n", "\n\t"))
+	}
+	return "* " + strings.Join(stringErrs, "\n* ")
+}
+
+func (e *joinError) Unwrap() []error {
+	return e.errs
 }

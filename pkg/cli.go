@@ -9,9 +9,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 type Cli struct {
@@ -130,8 +131,8 @@ type errorMessage struct {
 	Error string `json:"error"`
 }
 
-func (c *Cli) PullImage(ctx context.Context, image, platform string) error {
-	pullOut, err := c.cli.ImagePull(ctx, image, types.ImagePullOptions{Platform: platform})
+func (c *Cli) PullImage(ctx context.Context, img, platform string) error {
+	pullOut, err := c.cli.ImagePull(ctx, img, image.PullOptions{Platform: platform})
 	defer func() {
 		if pullOut != nil {
 			pullOut.Close()
@@ -165,10 +166,25 @@ func (c *Cli) PullImage(ctx context.Context, image, platform string) error {
 	return nil
 }
 
-func (c *Cli) PushImage(ctx context.Context, image, platform string) error {
-	pushOut, err := c.cli.ImagePush(ctx, image, types.ImagePushOptions{
+func (c *Cli) PushImage(ctx context.Context, img, platform string) error {
+	var platformSpec *ocispec.Platform
+	if platform != "" {
+		parts := strings.SplitN(platform, "/", 3)
+		p := ocispec.Platform{
+			OS:           parts[0],
+			Architecture: "amd64",
+		}
+		if len(parts) > 1 {
+			p.Architecture = parts[1]
+		}
+		if len(parts) > 2 {
+			p.Variant = parts[2]
+		}
+		platformSpec = &p
+	}
+	pushOut, err := c.cli.ImagePush(ctx, img, image.PushOptions{
 		RegistryAuth: c.auth,
-		Platform:     platform,
+		Platform:     platformSpec,
 	})
 	defer func() {
 		if pushOut != nil {
